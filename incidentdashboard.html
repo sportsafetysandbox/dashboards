@@ -1085,11 +1085,12 @@ const TABLE_COLUMNS = [
   { key: "zone", label: "Zone" },
   { key: "venue", label: "Venue" },
   { key: "location", label: "Location" },
+  // Computed from victimdob at the time of the incident — the raw date of birth itself is never
+  // read into this or any other displayed column, only this derived age number.
+  { key: "victimAge", label: "Victim Age", compute: r => calcAgeAtDate(dateOnly(r.victimDob), dateOnly(r.incidentDate)) },
   { key: "incidentType", label: "Type", fmt: incidentTypeLabel },
-  { key: "incidentStatus", label: "Status" },
   { key: "reportType", label: "Report Type" },
-  { key: "daysToResolve", label: "Days to Resolve" },
-  { key: "dateClosed", label: "Date Closed", fmt: fmtDate },
+  { key: "incidentStatus", label: "Status" },
 ];
 
 function renderTable(rows){
@@ -1106,13 +1107,15 @@ function renderTable(rows){
   }));
 
   const sorted = rows.slice().sort((a,b) => {
-    let av = a[sortState.col], bv = b[sortState.col];
-    if(sortState.col === "incidentDate" || sortState.col === "dateClosed"){
+    const col = TABLE_COLUMNS.find(c => c.key === sortState.col);
+    let av = col && col.compute ? col.compute(a) : a[sortState.col];
+    let bv = col && col.compute ? col.compute(b) : b[sortState.col];
+    if(sortState.col === "incidentDate"){
       av = dateOnly(av); bv = dateOnly(bv);
       av = av ? av.getTime() : -Infinity; bv = bv ? bv.getTime() : -Infinity;
-    } else if(sortState.col === "daysToResolve"){
-      av = toNumber(av); bv = toNumber(bv);
-      av = av === null ? -Infinity : av; bv = bv === null ? -Infinity : bv;
+    } else if(sortState.col === "victimAge"){
+      av = av === null || av === undefined ? -Infinity : av;
+      bv = bv === null || bv === undefined ? -Infinity : bv;
     } else {
       av = String(av||"").toLowerCase(); bv = String(bv||"").toLowerCase();
     }
@@ -1130,7 +1133,7 @@ function renderTable(rows){
     body.innerHTML = `<tr><td colspan="${TABLE_COLUMNS.length}" class="empty-note">No incidents match the current filters.</td></tr>`;
   } else {
     body.innerHTML = pageRows.map(r => "<tr>" + TABLE_COLUMNS.map(c => {
-      let v = r[c.key];
+      let v = c.compute ? c.compute(r) : r[c.key];
       if(c.fmt) v = c.fmt(v);
       if(c.key === "incidentStatus" && v){
         const color = STATUS_COLORS[String(v).toLowerCase()] || themeColor("--muted");
@@ -1153,7 +1156,7 @@ function exportCSV(){
   const rows = getFilteredRows();
   const header = TABLE_COLUMNS.map(c => c.label).join(",");
   const lines = rows.map(r => TABLE_COLUMNS.map(c => {
-    let v = r[c.key];
+    let v = c.compute ? c.compute(r) : r[c.key];
     if(c.fmt) v = c.fmt(v);
     v = (v === null || v === undefined) ? "" : String(v);
     if(v.includes(",") || v.includes('"')) v = '"' + v.replace(/"/g,'""') + '"';
