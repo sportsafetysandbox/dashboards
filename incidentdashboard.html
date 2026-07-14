@@ -153,6 +153,22 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   footer{text-align:center;color:var(--muted);font-size:11.5px;padding:20px;}
   .hidden{display:none !important;}
   .empty-note{color:var(--muted);font-size:13px;padding:30px;text-align:center;}
+
+  .caseid-cell{cursor:help;border-bottom:1px dotted var(--muted);}
+  #caseTooltip{position:fixed;z-index:100;max-width:420px;max-height:70vh;overflow-y:auto;background:var(--panel);border:1px solid var(--border);
+    border-radius:10px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:12.5px;
+    pointer-events:none;display:none;}
+  #caseTooltip .tt-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;}
+  #caseTooltip .tt-title{font-weight:700;font-size:13.5px;}
+  #caseTooltip .tt-subtitle{font-size:11.5px;color:var(--muted);margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+  #caseTooltip .tt-row{display:flex;justify-content:space-between;gap:14px;padding:2px 0;}
+  #caseTooltip .tt-label{color:var(--muted);}
+  #caseTooltip .tt-value{text-align:right;font-weight:600;}
+  #caseTooltip .tt-section{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--muted);
+    font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
+  #caseTooltip .tt-block{padding:4px 0 2px;}
+  #caseTooltip .tt-block-label{color:var(--muted);font-weight:600;margin-bottom:2px;}
+  #caseTooltip .tt-block-text{white-space:pre-wrap;font-weight:400;line-height:1.4;}
 </style>
 </head>
 <body>
@@ -203,9 +219,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       <div class="filter-group">
         <label>Incident Date From</label>
         <input type="date" id="fDateFrom">
-      </div>
-      <div class="filter-group">
-        <label>Incident Date To</label>
+        <label style="margin-top:6px;">Incident Date To</label>
         <input type="date" id="fDateTo">
       </div>
       <div class="filter-group">
@@ -308,7 +322,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   </div>
 </main>
 
-<footer>Sport Centre Incident Dashboard &mdash; all figures derived from Sport Centre Incident Report.xlsx. Personal data (victim, witness, staff, and officer identifying details) is intentionally excluded from every view.</footer>
+<div id="caseTooltip"></div>
+
+<footer>Sport Centre Incident Dashboard &mdash; all figures derived from Sport Centre Incident Report.xlsx. Identifying personal data (names, contact numbers, NRIC/ID, addresses, medical history, and next-of-kin/witness/staff/officer details) is intentionally excluded from every view. The Case ID hover summary additionally shows victim condition/injury as non-identifying clinical severity context, and the initial report / incident update narrative notes.</footer>
 
 <script>
 /* ======================= CONFIG ======================= */
@@ -347,12 +363,26 @@ const FIELD_MAP = {
   // export, not in the diagnostics panel's values (only its non-empty COUNT is shown there, same as
   // every other field). Treat this field as internal-computation-only, same privacy bar as the
   // fields still in EXCLUDED_FIELDS below.
-  victimDob: "victimdob"
+  victimDob: "victimdob",
+  // victimCondition / victimInjury are clinical SEVERITY descriptors (e.g. "Conscious", "Cut to
+  // right palm") rather than identity information, and are shown only in the Case ID hover
+  // tooltip — never in the main table, CSV export, or any chart — as essential context for
+  // safety-management review. victimmedicalhistory (pre-existing conditions) and every identity/
+  // contact field remain fully excluded below.
+  victimCondition: "victimcondition",
+  victimInjury: "victiminjury",
+  // initialReport / incidentUpdate are the narrative case-notes fields (what happened, what
+  // was done, follow-up status). They describe the incident and the response, not any
+  // individual's identity, so — like victimCondition/victimInjury above — they are shown only
+  // in the Case ID hover tooltip for safety-management review, never in the main table, CSV
+  // export, or any chart.
+  initialReport: "initialreport",
+  incidentUpdate: "incidentupdate"
 };
 
 // Explicitly-excluded PII fields (never read into memory for display, even if present in the file).
 const EXCLUDED_FIELDS = ["reportingstaff","staffcontact","designation","email","staffsinvolved",
-  "initialreport","incidentupdate","victim","victimcondition","victiminjury","victimmedicalhistory",
+  "victim","victimmedicalhistory",
   "victimcontact","victimid","victimrace","victimresidential","victimaddress","victimpostal",
   "nokname","nokrelation","nokcontact","witnessname","witnesscontact","witnessrelationship",
   "iorankname","iocontact"];
@@ -368,6 +398,7 @@ let charts = {};         // Chart.js instances
 let sortState = { col: "incidentDate", dir: "desc" };
 let currentPage = 1;
 const PAGE_SIZE = 25;
+let CURRENT_PAGE_ROWS = []; // rows currently rendered in the table, for the Case ID hover tooltip
 
 /* ======================= UTIL ======================= */
 function normalizeHeader(h){ return String(h==null?"":h).toLowerCase().replace(/[^a-z0-9]/g,""); }
@@ -391,6 +422,15 @@ function excelSerialToDate(n){
 // cells using their display format rather than a raw serial). Handles ISO, DD/MM/YYYY (assumed
 // over MM/DD/YYYY when ambiguous, since this is for a Singapore-based form), "24-Apr-2025" style,
 // and plain "HH:MM[:SS]" time strings, before falling back to the generic Date constructor.
+//
+// Two-digit years use the same pivot Excel itself uses when you type a short date: 00-29 -> 20xx,
+// 30-99 -> 19xx. This matters a lot for birthdates (e.g. victimdob "15/03/85") — blindly adding
+// 2000 to every 2-digit year would turn 1985 into 2085, a birthdate in the future, which then
+// produces a large NEGATIVE age when compared against an incident date in the past.
+function resolveTwoDigitYear(y){
+  if(y >= 100) return y;
+  return y <= 29 ? 2000 + y : 1900 + y;
+}
 function parseFlexibleDateString(s){
   s = String(s).trim();
   if(!s) return null;
@@ -400,7 +440,7 @@ function parseFlexibleDateString(s){
 
   m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?$/);
   if(m){
-    let a = +m[1], b = +m[2], y = +m[3]; if(y < 100) y += 2000;
+    let a = +m[1], b = +m[2], y = resolveTwoDigitYear(+m[3]);
     let day, month;
     if(a > 12) { day = a; month = b; } else if(b > 12) { day = b; month = a; } else { day = a; month = b; } // default DD/MM
     let hh = +(m[4]||0), mm = +(m[5]||0), ss = +(m[6]||0);
@@ -412,7 +452,7 @@ function parseFlexibleDateString(s){
   if(m){
     const months = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
     const mon = months[m[2].slice(0,3).toLowerCase()];
-    if(mon !== undefined){ let y = +m[3]; if(y < 100) y += 2000; return new Date(y, mon, +m[1]); }
+    if(mon !== undefined){ const y = resolveTwoDigitYear(+m[3]); return new Date(y, mon, +m[1]); }
   }
 
   m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?$/);
@@ -753,7 +793,7 @@ function incidentTypeOrderNum(v){
 function incidentTypeLabel(v){
   if(v === null || v === undefined || v === "") return "";
   const m = String(v).match(/^\s*(\d+)\s*\./);
-  if(m && parseInt(m[1], 10) === 21) return "Others";
+  if(m && parseInt(m[1], 10) === 21) return "21. Others";
   return v;
 }
 function sortIncidentTypeValues(values){
@@ -789,9 +829,18 @@ function calcAgeAtDate(dob, refDate){
   if(m < 0 || (m === 0 && refDate.getDate() < dob.getDate())) age--;
   return age;
 }
-function ageBracketLabel(dob, refDate){
-  const age = calcAgeAtDate(dob, refDate);
-  if(age === null || age < 0 || age > 120) return null; // guard against bad/garbled dates
+// Single source of truth for a record's victim age — used by BOTH the Incident Log table's
+// "Victim Age" column and the Victim Age Group chart, so the two can never disagree. Returns
+// null (rather than a nonsensical negative/huge number) when the underlying dates are missing
+// or implausible, e.g. a garbled date of birth; both consumers then simply omit that row rather
+// than showing/counting a bad value.
+function computeVictimAge(row){
+  const age = calcAgeAtDate(dateOnly(row.victimDob), dateOnly(row.incidentDate));
+  if(age === null || age < 0 || age > 120) return null;
+  return age;
+}
+function ageBracketForAge(age){
+  if(age === null || age === undefined) return null;
   return AGE_BRACKETS.find(b => age <= b.max).label;
 }
 
@@ -1065,7 +1114,7 @@ function renderCharts(rows){
   // never displayed anywhere, only this bracketed count.
   const ageCounts = new Map(AGE_BRACKETS.map(b => [b.label, 0]));
   rows.forEach(r => {
-    const label = ageBracketLabel(dateOnly(r.victimDob), dateOnly(r.incidentDate));
+    const label = ageBracketForAge(computeVictimAge(r));
     if(label) ageCounts.set(label, ageCounts.get(label) + 1);
   });
   const ageLabels = AGE_BRACKETS.map(b => b.label);
@@ -1087,7 +1136,7 @@ const TABLE_COLUMNS = [
   { key: "location", label: "Location" },
   // Computed from victimdob at the time of the incident — the raw date of birth itself is never
   // read into this or any other displayed column, only this derived age number.
-  { key: "victimAge", label: "Victim Age", compute: r => calcAgeAtDate(dateOnly(r.victimDob), dateOnly(r.incidentDate)) },
+  { key: "victimAge", label: "Victim Age", compute: computeVictimAge },
   { key: "incidentType", label: "Type", fmt: incidentTypeLabel },
   { key: "reportType", label: "Report Type" },
   { key: "incidentStatus", label: "Status" },
@@ -1128,16 +1177,20 @@ function renderTable(rows){
   currentPage = Math.min(currentPage, totalPages);
   const pageRows = sorted.slice((currentPage-1)*PAGE_SIZE, currentPage*PAGE_SIZE);
 
+  CURRENT_PAGE_ROWS = pageRows;
   const body = document.getElementById("tableBody");
   if(!pageRows.length){
     body.innerHTML = `<tr><td colspan="${TABLE_COLUMNS.length}" class="empty-note">No incidents match the current filters.</td></tr>`;
   } else {
-    body.innerHTML = pageRows.map(r => "<tr>" + TABLE_COLUMNS.map(c => {
+    body.innerHTML = pageRows.map((r, idx) => "<tr>" + TABLE_COLUMNS.map(c => {
       let v = c.compute ? c.compute(r) : r[c.key];
       if(c.fmt) v = c.fmt(v);
       if(c.key === "incidentStatus" && v){
         const color = STATUS_COLORS[String(v).toLowerCase()] || themeColor("--muted");
         return `<td><span class="status-pill" style="background:${color}22;color:${color};border:1px solid ${color}55">${escapeHtml(v)}</span></td>`;
+      }
+      if(c.key === "caseId"){
+        return `<td><span class="caseid-cell" data-row-idx="${idx}">${escapeHtml(v === null || v === undefined ? "" : v)}</span></td>`;
       }
       return `<td>${escapeHtml(v === null || v === undefined ? "" : v)}</td>`;
     }).join("") + "</tr>").join("");
@@ -1150,6 +1203,114 @@ function renderTable(rows){
 
 document.getElementById("prevPage").addEventListener("click", () => { currentPage--; renderTable(getFilteredRows()); });
 document.getElementById("nextPage").addEventListener("click", () => { currentPage++; renderTable(getFilteredRows()); });
+
+/* ======================= CASE ID TOOLTIP ======================= */
+// A concise, director-level summary of the case: operational details (where/when/what/status),
+// victim severity context (age/condition/injury — clinical descriptors, not identity), and
+// emergency-response involvement (ambulance/CPR/AED/police/SCDF). No names, contacts, IDs, or
+// other identifying fields are ever included here.
+function tooltipRow(label, value){
+  if(value === null || value === undefined || value === "") return "";
+  return `<div class="tt-row"><span class="tt-label">${escapeHtml(label)}</span><span class="tt-value">${escapeHtml(value)}</span></div>`;
+}
+
+// For long narrative text (initial report / incident update): label on its own line,
+// full text wrapped below with line breaks preserved.
+function tooltipBlock(label, value){
+  if(value === null || value === undefined || value === "") return "";
+  return `<div class="tt-block"><div class="tt-block-label">${escapeHtml(label)}</div><div class="tt-block-text">${escapeHtml(value)}</div></div>`;
+}
+
+function statusPillHtml(status){
+  if(!status) return "";
+  const color = STATUS_COLORS[String(status).toLowerCase()] || themeColor("--muted");
+  return `<span class="status-pill" style="background:${color}22;color:${color};border:1px solid ${color}55">${escapeHtml(status)}</span>`;
+}
+
+function buildCaseTooltipHtml(r){
+  const age = computeVictimAge(r);
+
+  const overview = [
+    tooltipRow("Zone", r.zone),
+    tooltipRow("Venue", r.venue),
+    tooltipRow("Location", r.location),
+    tooltipRow("Incident Date", fmtDate(r.incidentDate)),
+    tooltipRow("Time", fmtTime(r.incidentTime)),
+    tooltipRow("Type", incidentTypeLabel(r.incidentType)),
+  ];
+  if(r.incidentStatus && String(r.incidentStatus).toLowerCase() === "closed"){
+    overview.push(tooltipRow("Days to Resolve", toNumber(r.daysToResolve)));
+    overview.push(tooltipRow("Date Closed", fmtDate(r.dateClosed)));
+  }
+
+  const victim = [
+    tooltipRow("Age", age !== null ? age : null),
+    tooltipRow("Condition", r.victimCondition),
+    tooltipRow("Injury", r.victimInjury),
+  ].filter(Boolean);
+
+  const ambulanceInvolved = !!(r.ambTimeArrival || r.ambulanceNum);
+  const policeInvolved = !!(r.policeArrive || r.policeStation);
+  const cpr = toNumber(r.cprCycles), aed = toNumber(r.aedShocks);
+  const er = [
+    aed ? tooltipRow("AED Shocks Administered", aed) : "",
+    tooltipRow("Ambulance", ambulanceInvolved ? "Yes" : "No"),
+    ambulanceInvolved ? tooltipRow("Arrival / Departure", [fmtTime(r.ambTimeArrival), fmtTime(r.ambTimeLeft)].filter(Boolean).join(" → ")) : "",
+    ambulanceInvolved ? tooltipRow("Hospital Conveyed", r.hospitalConveyed) : "",
+    cpr ? tooltipRow("CPR Cycles", cpr) : "",
+    tooltipRow("Police", policeInvolved ? "Yes" : "No"),
+    policeInvolved ? tooltipRow("Police Station", r.policeStation) : "",
+    tooltipRow("SCDF Award Date", fmtDate(r.scdfAwardDate)),
+  ].filter(Boolean);
+
+  const notes = [
+    tooltipBlock("Initial Report", r.initialReport),
+    tooltipBlock("Incident Update", r.incidentUpdate),
+  ].filter(Boolean);
+
+  return `
+    <div class="tt-header">
+      <div class="tt-title">${escapeHtml(r.caseId || "(no case ID)")}</div>
+      ${statusPillHtml(r.incidentStatus)}
+    </div>
+    <div class="tt-subtitle">${escapeHtml(r.reportType || "Report type not recorded")}</div>
+    ${overview.join("")}
+    <div class="tt-section">Victim</div>
+    ${victim.length ? victim.join("") : '<div class="tt-row"><span class="tt-label">No victim details recorded</span></div>'}
+    <div class="tt-section">Emergency Response</div>
+    ${er.join("")}
+    <div class="tt-section">Notes</div>
+    ${notes.length ? notes.join("") : '<div class="tt-row"><span class="tt-label">No notes recorded</span></div>'}
+  `;
+}
+
+function positionCaseTooltip(e){
+  const tt = document.getElementById("caseTooltip");
+  const pad = 16;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  const rect = tt.getBoundingClientRect();
+  if(x + rect.width > window.innerWidth) x = Math.max(4, e.clientX - rect.width - pad);
+  if(y + rect.height > window.innerHeight) y = Math.max(4, e.clientY - rect.height - pad);
+  tt.style.left = x + "px";
+  tt.style.top = y + "px";
+}
+
+document.getElementById("tableBody").addEventListener("mouseover", (e) => {
+  const cell = e.target.closest(".caseid-cell");
+  if(!cell) return;
+  const row = CURRENT_PAGE_ROWS[parseInt(cell.dataset.rowIdx, 10)];
+  if(!row) return;
+  const tt = document.getElementById("caseTooltip");
+  tt.innerHTML = buildCaseTooltipHtml(row);
+  tt.style.display = "block";
+  positionCaseTooltip(e);
+});
+document.getElementById("tableBody").addEventListener("mousemove", (e) => {
+  if(e.target.closest(".caseid-cell")) positionCaseTooltip(e);
+});
+document.getElementById("tableBody").addEventListener("mouseout", (e) => {
+  if(e.target.closest(".caseid-cell")) document.getElementById("caseTooltip").style.display = "none";
+});
 
 /* ======================= EXPORT ======================= */
 function exportCSV(){
