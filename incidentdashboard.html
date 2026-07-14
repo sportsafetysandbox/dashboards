@@ -155,17 +155,21 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .empty-note{color:var(--muted);font-size:13px;padding:30px;text-align:center;}
 
   .caseid-cell{cursor:help;border-bottom:1px dotted var(--muted);}
-  #caseTooltip{position:fixed;z-index:100;max-width:420px;max-height:70vh;overflow-y:auto;background:var(--panel);border:1px solid var(--border);
+  #caseTooltip{position:fixed;z-index:100;max-width:640px;max-height:70vh;overflow-y:auto;background:var(--panel);border:1px solid var(--border);
     border-radius:10px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:12.5px;
     pointer-events:none;display:none;}
   #caseTooltip .tt-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px;}
   #caseTooltip .tt-title{font-weight:700;font-size:13.5px;}
   #caseTooltip .tt-subtitle{font-size:11.5px;color:var(--muted);margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+  #caseTooltip .tt-columns{display:flex;gap:16px;align-items:flex-start;}
+  #caseTooltip .tt-col-main{flex:1 1 240px;min-width:0;}
+  #caseTooltip .tt-col-notes{flex:1 1 240px;min-width:0;border-left:1px solid var(--border);padding-left:16px;}
   #caseTooltip .tt-row{display:flex;justify-content:space-between;gap:14px;padding:2px 0;}
   #caseTooltip .tt-label{color:var(--muted);}
   #caseTooltip .tt-value{text-align:right;font-weight:600;}
   #caseTooltip .tt-section{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--muted);
     font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
+  #caseTooltip .tt-col-notes .tt-section{margin-top:0;padding-top:0;border-top:none;}
   #caseTooltip .tt-block{padding:4px 0 2px;}
   #caseTooltip .tt-block-label{color:var(--muted);font-weight:600;margin-bottom:2px;}
   #caseTooltip .tt-block-text{white-space:pre-wrap;font-weight:400;line-height:1.4;}
@@ -246,7 +250,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         <label>Search (case ID / venue / zone / type)</label>
         <input type="text" id="fSearch" placeholder="Type to search&hellip;">
       </div>
-      <button id="clearFiltersBtn">Clear filters</button>
+      <button id="clearFiltersBtn">Reset Filters</button>
       <div id="resultCount"></div>
     </div>
 
@@ -505,6 +509,15 @@ function dateOnly(v){
 
 function fmtDate(v){
   const d = dateOnly(v);
+  if(!d) return "";
+  return d.getFullYear() + "-" + pad2(d.getMonth()+1) + "-" + pad2(d.getDate());
+}
+
+// Plain calendar-date formatter for real JS Date objects representing "now" (e.g. today's date
+// for filter defaults). Deliberately does NOT go through dateOnly()'s hour>=12 bump heuristic —
+// that heuristic exists only to correct Excel/SheetJS floating-point imprecision on parsed date
+// cells, and would wrongly push a legitimate current-time Date into tomorrow any time after noon.
+function fmtDateSimple(d){
   if(!d) return "";
   return d.getFullYear() + "-" + pad2(d.getMonth()+1) + "-" + pad2(d.getDate());
 }
@@ -844,6 +857,14 @@ function ageBracketForAge(age){
   return AGE_BRACKETS.find(b => age <= b.max).label;
 }
 
+// Default date range: 1 Jan of the current year through today. Shared by initial load and
+// the Reset Filters button so "reset" always means "back to this default", not "blank".
+function applyDefaultDateRange(){
+  const today = new Date();
+  document.getElementById("fDateFrom").value = fmtDateSimple(new Date(today.getFullYear(), 0, 1));
+  document.getElementById("fDateTo").value = fmtDateSimple(today);
+}
+
 function initFilters(){
   fillMultiSelect("fZone", uniqueSorted("zone"), { allOption: true });
   refreshVenueOptions();
@@ -851,10 +872,7 @@ function initFilters(){
   fillMultiSelect("fStatus", uniqueSorted("incidentStatus"));
   fillMultiSelect("fReportType", sortReportTypeValues(uniqueSorted("reportType")));
 
-  // Defaults: 1 Jan of the current year through today.
-  const today = new Date();
-  document.getElementById("fDateFrom").value = fmtDate(new Date(today.getFullYear(), 0, 1));
-  document.getElementById("fDateTo").value = fmtDate(today);
+  applyDefaultDateRange();
 
   document.getElementById("fZone").addEventListener("change", () => {
     normalizeAllSelection("fZone");
@@ -871,8 +889,7 @@ function initFilters(){
     });
     Array.from(document.getElementById("fZone").options).forEach(o => { o.selected = (o.value === "__ALL__"); });
     refreshVenueOptions();
-    document.getElementById("fDateFrom").value = "";
-    document.getElementById("fDateTo").value = "";
+    applyDefaultDateRange();
     document.getElementById("fSearch").value = "";
     currentPage = 1;
     renderAll();
@@ -1274,13 +1291,19 @@ function buildCaseTooltipHtml(r){
       ${statusPillHtml(r.incidentStatus)}
     </div>
     <div class="tt-subtitle">${escapeHtml(r.reportType || "Report type not recorded")}</div>
-    ${overview.join("")}
-    <div class="tt-section">Victim</div>
-    ${victim.length ? victim.join("") : '<div class="tt-row"><span class="tt-label">No victim details recorded</span></div>'}
-    <div class="tt-section">Emergency Response</div>
-    ${er.join("")}
-    <div class="tt-section">Notes</div>
-    ${notes.length ? notes.join("") : '<div class="tt-row"><span class="tt-label">No notes recorded</span></div>'}
+    <div class="tt-columns">
+      <div class="tt-col-main">
+        ${overview.join("")}
+        <div class="tt-section">Victim</div>
+        ${victim.length ? victim.join("") : '<div class="tt-row"><span class="tt-label">No victim details recorded</span></div>'}
+        <div class="tt-section">Emergency Response</div>
+        ${er.join("")}
+      </div>
+      <div class="tt-col-notes">
+        <div class="tt-section">Notes</div>
+        ${notes.length ? notes.join("") : '<div class="tt-row"><span class="tt-label">No notes recorded</span></div>'}
+      </div>
+    </div>
   `;
 }
 
