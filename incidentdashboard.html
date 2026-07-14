@@ -138,14 +138,28 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   .table-header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;
     margin-bottom:12px;}
   .table-header h3{margin:0;font-size:14px;}
-  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;}
   thead th{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border);color:var(--muted);
-    cursor:pointer;white-space:nowrap;position:sticky;top:0;background:var(--panel);}
+    cursor:pointer;position:sticky;top:0;background:var(--panel);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   thead th:hover{color:var(--accent2);}
-  tbody td{padding:8px 10px;border-bottom:1px solid var(--divider);white-space:nowrap;}
+  tbody td{padding:8px 10px;border-bottom:1px solid var(--divider);white-space:normal;overflow-wrap:break-word;word-break:break-word;vertical-align:top;}
   tbody tr:hover{background:var(--panel2);}
-  .status-pill{padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;display:inline-block;}
-  .table-wrap{overflow:auto;max-height:480px;border:1px solid var(--border);border-radius:8px;}
+  .status-pill{padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;display:inline-block;white-space:nowrap;}
+  .table-wrap{overflow-y:auto;overflow-x:hidden;max-height:480px;border:1px solid var(--border);border-radius:8px;}
+
+  /* Fixed column widths (sum to 100%) so the 10-column Incident Log always fits the panel width
+     with no horizontal scrolling - long text (Venue, Type, Report Type) wraps within its cell
+     instead of forcing the table wider than its container. Order matches TABLE_COLUMNS in the script. */
+  #tableHeadRow th:nth-child(1),  tbody td:nth-child(1) { width:12%; } /* Case ID */
+  #tableHeadRow th:nth-child(2),  tbody td:nth-child(2) { width:9%; }  /* Incident Date */
+  #tableHeadRow th:nth-child(3),  tbody td:nth-child(3) { width:6%; }  /* Time */
+  #tableHeadRow th:nth-child(4),  tbody td:nth-child(4) { width:7%; }  /* Zone */
+  #tableHeadRow th:nth-child(5),  tbody td:nth-child(5) { width:14%; } /* Venue */
+  #tableHeadRow th:nth-child(6),  tbody td:nth-child(6) { width:10%; } /* Location */
+  #tableHeadRow th:nth-child(7),  tbody td:nth-child(7) { width:6%; }  /* Victim Age */
+  #tableHeadRow th:nth-child(8),  tbody td:nth-child(8) { width:16%; } /* Type */
+  #tableHeadRow th:nth-child(9),  tbody td:nth-child(9) { width:12%; } /* Report Type */
+  #tableHeadRow th:nth-child(10), tbody td:nth-child(10){ width:8%; }  /* Status */
   .pagination{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12.5px;
     color:var(--muted);}
   .pagination .btns{display:flex;gap:6px;}
